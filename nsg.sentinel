@@ -1,0 +1,26 @@
+# Import the Azure Network Security Group rules
+import "tfplan"
+
+# Define the allowed ports
+allowed_ports = [22, 80, 443]
+
+# Filter the relevant resources from the Terraform plan
+nsg_rules = tfplan.filter_resource_changes (
+  # Look for Azure NSG rule resources
+  type == "azurerm_network_security_rule",  # Add comma here
+  change.actions contains "create" or change.actions contains "update"  # No comma needed here since it's the last condition
+)
+
+# Rule to check if only allowed ports are enabled
+allowed_rules = rule {
+  all nsg_rules as r {
+    # Allow inbound or outbound rule only for ports 22, 80, 443
+    r.change.after.properties.destination_port_range in allowed_ports
+  }
+}
+
+# Enforce the rule
+main = rule {
+  allowed_rules
+}
+
