@@ -1,0 +1,33 @@
+import "tfplan/v2" as tfplan
+
+# Define the allowed region
+allowed_region = "eastus"
+
+# Filter to get all managed resources
+allResources = filter tfplan.resource_changes as _, resource_changes {
+    resource_changes.mode is "managed" and
+    (resource_changes.change.actions contains "create" or
+     resource_changes.change.actions contains "update")
+}
+
+# Function to check compliance of resource locations
+getResourceLocationCompliance = func(resources) {
+    nonCompliantResources = []
+    for resources as _, resource {
+        # Check if the resource has the 'location' key and validate its value
+        if keys(resource.change.after) contains "location" {
+            resourceLocation = resource.change.after.location
+            
+            # Check if the resource's location matches the allowed region
+            if resourceLocation is not allowed_region {
+                nonCompliantResources = nonCompliantResources + [resource]
+            }
+        }
+    }
+    return length(nonCompliantResources)
+}
+
+// Ensure that resources are only created or updated in the allowed region.
+main = rule {
+    getResourceLocationCompliance(allResources) == 0
+}
