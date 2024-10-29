@@ -1,0 +1,66 @@
+import "tfplan/v2" as tfplan
+import "strings"
+
+restricted_source_address_prefixes = ["*", "internet", "any", "0.0.0.0", "/0"]
+allowed_ports = ["80", "443"]
+
+allNetworkSecurityGroups = filter tfplan.resource_changes as _, resource_changes {
+	resource_changes.type is "azurerm_network_security_group" and
+		resource_changes.mode is "managed" and
+		(resource_changes.change.actions contains "create" or
+			resource_changes.change.actions is ["update"])
+}
+
+allNetworkSecurityRules = filter tfplan.resource_changes as _, resource_changes {
+	resource_changes.type is "azurerm_network_security_rule" and
+		resource_changes.mode is "managed" and
+		(resource_changes.change.actions contains "create" or
+			resource_changes.change.actions is ["update"])
+}
+
+getNetworkSecurityGroupCompliance = func(groups) {
+	mapSecurityRules = {}
+	for groups as _, group {
+		if keys(group.change.after) not contains "security_rule" {
+			for allNetworkSecurityRules as sr {
+				destinationPortRange = allNetworkSecurityRules[sr]["change"]["after"]["destination_port_range"]
+				sourceAddressPrefix = allNetworkSecurityRules[sr]["change"]["after"]["source_address_prefix"]
+				securityRuleName = allNetworkSecurityRules[sr]["change"]["after"]["name"]
+				if destinationPortRange not in allowed_ports {
+					if sourceAddressPrefix in restricted_source_address_prefixes {
+						mapSecurityRules[securityRuleName] = sr
+					}
+				} else if destinationPortRange matches "-" {
+					listPortRange = strings.split(destinationPortRange, "-")
+					for port in listPortRange as p {
+						if p not in allowed_ports {
+							mapSecurityRules[securityRuleName] = sr
+						}
+					}
+				}
+			}
+			return length(mapSecurityRules)
+		}
+
+		for group.change.after.security_rule as sr {
+			if sr.destination_port_range not in allowed_ports {
+				if sr.source_address_prefix in restricted_source_address_prefixes {
+					mapSecurityRules[sr.name] = sr
+				}
+			} else if sr.destination_port_range matches "-" {
+				listPortRange = strings.split(sr.destination_port_range, "-")
+				for port in listPortRange as p {
+					if p not in allowed_ports {
+						mapSecurityRules[sr.name] = sr
+					}
+				}
+			}
+		}
+	}
+	return length(mapSecurityRules)
+}
+
+// Ensure that only ports 80, and 443 are allowed from the internet.
+main = rule {
+	getNetworkSecurityGroupCompliance(allNetworkSecurityGroups) == 0
+}
