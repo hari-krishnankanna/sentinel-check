@@ -1,0 +1,65 @@
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Define the allowed inbound ports
+allowed_ports = ["22", "80", "443"]
+
+# Filter to get all managed Network Security Groups
+allNetworkSecurityGroups = filter tfplan.resource_changes as _, resource_changes {
+	resource_changes.type is "azurerm_network_security_group" and
+		resource_changes.mode is "managed" and
+		(resource_changes.change.actions contains "create" or
+			resource_changes.change.actions is ["update"])
+}
+
+# Get all managed Network Security Rules
+allNetworkSecurityRules = filter tfplan.resource_changes as _, resource_changes {
+	resource_changes.type is "azurerm_network_security_rule" and
+		resource_changes.mode is "managed" and
+		(resource_changes.change.actions contains "create" or
+			resource_changes.change.actions is ["update"])
+}
+
+# Function to check compliance of inbound rules for allowed ports
+getInboundRuleCompliance = func(groups) {
+	mapSecurityRules = {}
+	for groups as _, group {
+		if keys(group.change.after) not contains "security_rule" {
+			for allNetworkSecurityRules as sr {
+				destinationPortRange = allNetworkSecurityRules[sr]["change"]["after"]["destination_port_range"]
+				if destinationPortRange not in allowed_ports {
+					mapSecurityRules[sr] = sr
+				} else if destinationPortRange matches "-" {
+					listPortRange = strings.split(destinationPortRange, "-")
+					for port in listPortRange as p {
+						if p not in allowed_ports {
+							mapSecurityRules[sr] = sr
+						}
+					}
+				}
+			}
+			return length(mapSecurityRules)
+		}
+
+		for group.change.after.security_rule as sr {
+			if sr.direction is "Inbound" {
+				if sr.destination_port_range not in allowed_ports {
+					mapSecurityRules[sr.name] = sr
+				} else if sr.destination_port_range matches "-" {
+					listPortRange = strings.split(sr.destination_port_range, "-")
+					for port in listPortRange as p {
+						if p not in allowed_ports {
+							mapSecurityRules[sr.name] = sr
+						}
+					}
+				}
+			}
+		}
+	}
+	return length(mapSecurityRules)
+}
+
+// Ensure that all inbound rules only allow ports 22, 80, and 443.
+main = rule {
+	getInboundRuleCompliance(allNetworkSecurityGroups) == 0
+}
