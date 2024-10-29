@@ -1,5 +1,6 @@
 # Import the Azure Network Security Group rules
-import "tfplan"
+import "tfplan/v2" as tfplan
+import "strings"
 
 # Define the allowed ports
 allowed_ports = [22, 80, 443]
